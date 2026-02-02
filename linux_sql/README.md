@@ -4,15 +4,15 @@
 
 The **Linux Cluster Monitoring Agent** is a lightweight resource monitoring and management solution designed to collect, store, and analyze hardware specifications and real-time system usage across a cluster of Linux machines.
 
-Its primary goal is to provide system administrators, DevOps engineers, and backend developers with a centralized and consistent view of server health. By monitoring key indicators?such as CPU utilization, memory availability, and disk usage?the system helps ensure production environments remain stable and scalable.
+Its primary goal is to provide system administrators, DevOps engineers, and backend developers with a centralized and consistent view of server health. By monitoring key indicators, such as CPU utilization, memory availability, and disk usage, the system helps ensure production environments remain stable and scalable.
 
 The project is implemented using a modular and script-driven architecture:
 
-- **Bash** is used for interacting with the Linux operating system and collecting metrics
-- **PostgreSQL** is used as the centralized data store
-- **Docker** provides an isolated and reproducible database environment
-- **Crontab** automates periodic metric collection
-- **Git/GitHub** manages version control and collaboration
+- **Bash** is used for interacting with the Linux operating system and collecting metrics.
+- **PostgreSQL** is used as the centralized data store.
+- **Docker** provides an isolated and reproducible database environment.
+- **Crontab** automates periodic metric collection.
+- **Git/GitHub** manages version control and collaboration.
 
 This project simulates a real-world infrastructure monitoring workflow commonly used in cloud and on-premise environments.
 
@@ -20,28 +20,33 @@ This project simulates a real-world infrastructure monitoring workflow commonly 
 
 ## Quick Start
 
-### 1. Provision a PostgreSQL Instance
+### 1. Create a PostgreSQL Instance
 
 A PostgreSQL database is deployed using Docker. The provided shell script simplifies container lifecycle management.
 
 ```bash
 # Usage: ./scripts/psql_docker.sh create|start|stop [db_username] [db_password]
 
-./scripts/psql_docker.sh create rocky 1234
-./scripts/psql_docker.sh start
+sudo ./scripts/psql_docker.sh create rocky 1234
+sudo ./scripts/psql_docker.sh start
 ```
 
 This will:
 
 - Pull the official PostgreSQL image
 - Create a container named `jrvs-psql`
-- Initialize a database named `host_agent`
+- Create database user `rocky` with password `1234`
 
 ---
 
 ### 2. Initialize Database Schema
 
-Once the container is running, initialize the database schema using the DDL script.
+Once the container is running, create a database and initialize the database schema using the DDL script.
+
+```bash
+psql -h localhost -U rocky -W
+CREATE DATABASE host_agent;
+```
 
 ```bash
 psql -h localhost -U rocky -d host_agent -f sql/ddl.sql
@@ -66,11 +71,28 @@ Examples of collected data:
 - Number of CPU cores
 - Total memory
 
+ ---
+
+### 4. Insert Host Usage Data
+
+Run the `host_usage.sh` script **periodically** to collect host resource usage metrics.
+
+```bash
+bash scripts/host_usage.sh localhost 5432 host_agent rocky 1234
+```
+Examples of collected data:
+
+- Timestamp
+- Host ID
+- Memory free
+- CPU idle
+- CPU kernel
+
 ---
 
-### 4. Schedule Periodic Usage Collection
+### 5. Schedule Periodic Usage Collection
 
-To continuously track system usage, configure a Cron job to run the usage script every minute.
+To continuously track system usage, configure a Crontab to run the usage script every minute.
 
 ```bash
 crontab -e
@@ -88,20 +110,18 @@ This enables automatic ingestion of runtime metrics without manual intervention.
 
 ## Implementation
 
+The project was implemented in a modular and incremental manner to ensure clarity, scalability, and automation.
+
 ### System Architecture
 
-The system follows a **hub-and-spoke architecture**:
+The system uses the following architecture:
 
-- Each Linux host runs lightweight monitoring scripts (spokes)
-- All data is pushed to a centralized PostgreSQL database (hub)
+- Each Linux host runs lightweight monitoring scripts.
+- All data is pushed to a centralized PostgreSQL database.
 
-```
-Linux Host A  ??
-Linux Host B  ????? PostgreSQL (Docker)
-Linux Host C  ??
-```
+![Architecture](assets/linux.png)
 
-This design allows horizontal scalability while keeping operational overhead minimal.
+This design allows horizontal scalability to multiple nodes.
 
 ---
 
@@ -157,29 +177,23 @@ This script is designed to be executed repeatedly via Crontab.
 
 ---
 
-#### `queries.sql`
-
-Contains analytical SQL queries used to derive insights from collected data, such as:
-
-- Average CPU usage per host
-- Memory trends over time
-- Identification of underutilized or overloaded nodes
-
----
-
 ## Database Design
 
 ### Table: `host_info`
 
 Stores static hardware metadata.
 
-| Column Name | Data Type | Description |
-|------------|-----------|-------------|
-| id | SERIAL (PK) | Unique host identifier |
-| hostname | VARCHAR | Unique host name |
-| cpu_number | INTEGER | Number of CPU cores |
-| cpu_architecture | VARCHAR | CPU architecture |
-| total_mem | INTEGER | Total memory in KB |
+| Column Name       | Data Type        | Description                        | Constraints         |
+|------------------|-----------------|------------------------------------|-------------------|
+| id               | SERIAL           | Unique host identifier             | PRIMARY KEY        |
+| hostname         | VARCHAR          | Unique host name                   | UNIQUE             |
+| cpu_number       | SMALLINT         | Number of CPU cores                | NOT NULL           |
+| cpu_architecture | VARCHAR          | CPU architecture                   | NOT NULL           |
+| cpu_model        | VARCHAR          | CPU model name                     | NOT NULL           |
+| cpu_mhz          | DOUBLE PRECISION | CPU frequency in MHz               | NOT NULL           |
+| l2_cache         | INTEGER          | L2 cache size in KB                | NOT NULL           |
+| timestamp        | TIMESTAMP        | Record timestamp                   | NULLABLE           |
+| total_mem        | INTEGER          | Total memory in KB                 | NULLABLE           |
 
 ---
 
@@ -187,13 +201,16 @@ Stores static hardware metadata.
 
 Stores time-series resource usage data.
 
-| Column Name | Data Type | Description |
-|------------|-----------|-------------|
-| timestamp | TIMESTAMP | Data collection time |
-| host_id | INTEGER (FK) | Reference to host_info(id) |
-| memory_free | INTEGER | Free memory (MB) |
-| cpu_idle | INTEGER | CPU idle percentage |
-| disk_io | INTEGER | Disk I/O usage |
+| Column Name      | Data Type        | Description                            | Constraints                        |
+|-----------------|-----------------|----------------------------------------|-----------------------------------|
+| timestamp       | TIMESTAMP        | Record timestamp                        | NOT NULL                          |
+| host_id         | SERIAL           | Host identifier                          | NOT NULL, FOREIGN KEY host_id |
+| memory_free     | INTEGER          | Free memory in KB                        | NOT NULL                          |
+| cpu_idle        | SMALLINT         | CPU idle percentage                       | NOT NULL                          |
+| cpu_kernel      | SMALLINT         | CPU time spent in kernel mode (%)        | NOT NULL                          |
+| disk_io         | INTEGER          | Disk I/O in KB/s                          | NOT NULL                          |
+| disk_available  | INTEGER          | Available disk space in KB                | NOT NULL                          |
+
 
 A foreign key constraint ensures referential integrity between hosts and usage records.
 
@@ -208,7 +225,7 @@ The system was tested locally on a Linux environment using the following methods
 - Executed `ddl.sql` using psql
 - Verified table structure using `\d host_info` and `\d host_usage`
 
-### Functional Testing
+### Test host_info.sh
 
 - Manually executed `host_info.sh`
 - Verified data insertion via SQL queries
@@ -217,7 +234,7 @@ The system was tested locally on a Linux environment using the following methods
 SELECT * FROM host_info;
 ```
 
-### Integration Testing
+### Test host_usage.sh
 
 - Configured Crontab to run every minute
 - Monitored `/tmp/host_usage.log`
@@ -234,7 +251,7 @@ SELECT COUNT(*) FROM host_usage;
 - **Database Layer:** PostgreSQL deployed via Docker
 - **Monitoring Layer:** Bash scripts running on each Linux node
 - **Automation:** Crontab scheduler
-- **Version Control:** GitHub repository
+- **Version Control:** Git and GitHub repository
 
 This setup closely mirrors real-world DevOps monitoring pipelines.
 
